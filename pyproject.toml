@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "system-controller"
+version = "0.1.0"
+description = "TUI application for monitoring systemd services across remote hosts"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.40.0",
+    "asyncssh>=2.14.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+system-controller = "system_controller.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

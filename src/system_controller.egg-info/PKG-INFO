@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: system-controller
+Version: 0.1.0
+Summary: TUI application for monitoring systemd services across remote hosts
+Requires-Python: >=3.10
+Requires-Dist: textual>=0.40.0
+Requires-Dist: asyncssh>=2.14.0
+Requires-Dist: pyyaml>=6.0

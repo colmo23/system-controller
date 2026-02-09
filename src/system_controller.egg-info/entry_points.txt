@@ -1,0 +1,2 @@
+[console_scripts]
+system-controller = system_controller.cli:main
