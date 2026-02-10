@@ -21,3 +21,4 @@ class ServiceStatus:
     active: bool
     status_output: str
     error: str = ""
+    not_found: bool = False

@@ -36,6 +36,7 @@ class MainScreen(Screen):
         self.services = services
         self.hosts = hosts
         self._statuses: list[ServiceStatus] = []
+        self._connect_errors: dict[str, str | None] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -60,29 +61,47 @@ class MainScreen(Screen):
         ssh = app.ssh_backend
 
         # Connect to hosts
-        connect_errors = await ssh.connect(app.hosts)
+        self._connect_errors = await ssh.connect(app.hosts)
 
-        # Fetch all statuses concurrently
+        # Only fetch statuses for connected hosts
+        connected_hosts = [h for h in self.hosts if not self._connect_errors.get(h.address)]
         tasks = []
         for service in self.services:
-            for host in self.hosts:
+            for host in connected_hosts:
                 tasks.append(ssh.get_service_status(host.address, service.name))
 
-        self._statuses = await asyncio.gather(*tasks)
+        self._statuses = await asyncio.gather(*tasks) if tasks else []
 
         self._populate_table()
 
     def _populate_table(self) -> None:
         table = self.query_one("#service-table", DataTable)
         table.clear()
-        for status in self._statuses:
-            if status.error:
-                display_status = Text(f"⚠ {status.error}", style="bold red")
-            elif status.active:
-                display_status = Text("● active", style="bold green")
+
+        # 1) Unreachable hosts — single row each
+        for host in self.hosts:
+            err = self._connect_errors.get(host.address)
+            if err:
+                table.add_row("-", host.address, Text("⚠ unreachable", style="bold red"), key=f"unreachable:{host.address}")
+
+        # 2) Reachable hosts — group statuses by host
+        for host in self.hosts:
+            if self._connect_errors.get(host.address):
+                continue
+            host_statuses = [s for s in self._statuses if s.host == host.address]
+            found = [s for s in host_statuses if not s.not_found]
+            if not found:
+                # All services are not_found on this host
+                table.add_row("-", host.address, Text("no services", style="dim"), key=f"noservices:{host.address}")
             else:
-                display_status = Text("○ inactive", style="bold yellow")
-            table.add_row(status.service, status.host, display_status, key=f"{status.service}@{status.host}")
+                for status in found:
+                    if status.error:
+                        display_status = Text(f"⚠ {status.error}", style="bold red")
+                    elif status.active:
+                        display_status = Text("● active", style="bold green")
+                    else:
+                        display_status = Text("○ inactive", style="bold yellow")
+                    table.add_row(status.service, status.host, display_status, key=f"{status.service}@{status.host}")
 
         self.query_one("#loading").display = False
         self.query_one("#table-container").display = True
@@ -96,11 +115,12 @@ class MainScreen(Screen):
         import asyncio
 
         ssh = self.app.ssh_backend
+        connected_hosts = [h for h in self.hosts if not self._connect_errors.get(h.address)]
         tasks = []
         for service in self.services:
-            for host in self.hosts:
+            for host in connected_hosts:
                 tasks.append(ssh.get_service_status(host.address, service.name))
-        self._statuses = await asyncio.gather(*tasks)
+        self._statuses = await asyncio.gather(*tasks) if tasks else []
         self._populate_table()
 
     def action_refresh(self) -> None:

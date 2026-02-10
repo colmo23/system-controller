@@ -1,4 +1,5 @@
 import argparse
+import logging
 import sys
 
 
@@ -17,7 +18,19 @@ def main():
         required=True,
         help="Path to services YAML config file",
     )
+    parser.add_argument(
+        "--log", "-l",
+        default=None,
+        help="Path to log file (if omitted, logging is disabled)",
+    )
     args = parser.parse_args()
+
+    if args.log:
+        logging.basicConfig(
+            filename=args.log,
+            level=logging.DEBUG,
+            format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        )
 
     from system_controller.config import load_config
     from system_controller.inventory import load_inventory
