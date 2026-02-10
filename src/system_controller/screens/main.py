@@ -13,6 +13,8 @@ AUTO_REFRESH_SECONDS = 30
 class MainScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("s", "stop_service", "Stop"),
+        Binding("t", "restart_service", "Restart"),
         Binding("q", "quit", "Quit"),
         Binding("enter", "select_row", "View Details", show=False),
     ]
@@ -130,3 +132,50 @@ class MainScreen(Screen):
 
         from system_controller.screens.detail import DetailScreen
         self.app.push_screen(DetailScreen(service_config, host))
+
+    def _get_selected_service_host(self) -> tuple[str, str] | None:
+        table = self.query_one("#service-table", DataTable)
+        if table.row_count == 0:
+            return None
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        key_str = str(row_key)
+        if "@" not in key_str:
+            return None
+        service_name, host = key_str.split("@", 1)
+        return service_name, host
+
+    def _do_service_action(self, action: str) -> None:
+        selected = self._get_selected_service_host()
+        if selected is None:
+            return
+        service_name, host = selected
+
+        from system_controller.screens.confirm import ConfirmScreen
+
+        def on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self.run_worker(
+                    self._execute_service_action(action, service_name, host),
+                    exclusive=True,
+                )
+
+        self.app.push_screen(ConfirmScreen(action, service_name, host), callback=on_confirm)
+
+    async def _execute_service_action(self, action: str, service: str, host: str) -> None:
+        ssh = self.app.ssh_backend
+        if action == "stop":
+            result = await ssh.stop_service(host, service)
+        else:
+            result = await ssh.restart_service(host, service)
+        error = result.strip() if result.strip() else None
+        if error:
+            self.notify(f"{action.title()} {service}: {error}", severity="error", timeout=5)
+        else:
+            self.notify(f"{action.title()}ped {service} on {host}", timeout=3)
+        await self._refresh_statuses()
+
+    def action_stop_service(self) -> None:
+        self._do_service_action("stop")
+
+    def action_restart_service(self) -> None:
+        self._do_service_action("restart")

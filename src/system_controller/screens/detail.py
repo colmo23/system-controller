@@ -20,6 +20,8 @@ from system_controller.models import ServiceConfig
 class DetailScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
+        Binding("s", "stop_service", "Stop"),
+        Binding("t", "restart_service", "Restart"),
     ]
 
     CSS = """
@@ -108,6 +110,40 @@ class DetailScreen(Screen):
             tasks.append(fetch_command(i, cmd))
 
         await asyncio.gather(*tasks)
+
+    def _do_service_action(self, action: str) -> None:
+        from system_controller.screens.confirm import ConfirmScreen
+
+        def on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self.run_worker(
+                    self._execute_service_action(action),
+                    exclusive=True,
+                )
+
+        self.app.push_screen(
+            ConfirmScreen(action, self.service.name, self.host),
+            callback=on_confirm,
+        )
+
+    async def _execute_service_action(self, action: str) -> None:
+        ssh = self.app.ssh_backend
+        if action == "stop":
+            result = await ssh.stop_service(self.host, self.service.name)
+        else:
+            result = await ssh.restart_service(self.host, self.service.name)
+        error = result.strip() if result.strip() else None
+        if error:
+            self.notify(f"{action.title()} {self.service.name}: {error}", severity="error", timeout=5)
+        else:
+            self.notify(f"{action.title()}ped {self.service.name} on {self.host}", timeout=3)
+        await self._fetch_all()
+
+    def action_stop_service(self) -> None:
+        self._do_service_action("stop")
+
+    def action_restart_service(self) -> None:
+        self._do_service_action("restart")
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

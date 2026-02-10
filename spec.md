@@ -7,4 +7,4 @@ On start up the TUI should ssh to each machine and get the systemctl status for 
 The main view of the TUI should be a list of the services. Each row should have service name, service status.
 If you select a service you should get a new view with details of the service. The view should have "journalctl" output of the service and any files or command outputs for the service that are defined for that service in its config file.
 
-
+From both the main list view and the detail view you can stop (key: s) or restart (key: t) a service. Each action prompts a confirmation dialog before executing. The commands run via sudo systemctl. After the action completes, the main view refreshes the status table and the detail view re-fetches all data (journal, files, commands).

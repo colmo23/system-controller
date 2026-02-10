@@ -56,6 +56,12 @@ class SSHBackend:
                 status_output="", error=str(exc),
             )
 
+    async def stop_service(self, host: str, service: str) -> str:
+        return await self.run_command(host, f"sudo systemctl stop {service}")
+
+    async def restart_service(self, host: str, service: str) -> str:
+        return await self.run_command(host, f"sudo systemctl restart {service}")
+
     async def get_journal(self, host: str, service: str, lines: int = 200) -> str:
         return await self.run_command(
             host, f"journalctl -u {service} --no-pager -n {lines}"
