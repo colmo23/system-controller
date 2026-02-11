@@ -54,7 +54,12 @@ class SSHBackend:
                 log.error("SSH connection failed for %s: %s", host.address, exc, exc_info=True)
                 results[host.address] = str(exc)
 
-        await asyncio.gather(*[_connect_one(h) for h in hosts])
+        need_connect = [h for h in hosts if h.address not in self._connections]
+        await asyncio.gather(*[_connect_one(h) for h in need_connect])
+        # Carry forward existing connections as successful
+        for h in hosts:
+            if h.address not in results:
+                results[h.address] = None
         return results
 
     async def get_service_status(self, host: str, service: str) -> ServiceStatus:

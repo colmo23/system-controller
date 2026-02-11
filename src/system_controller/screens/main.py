@@ -110,10 +110,17 @@ class MainScreen(Screen):
         self.run_worker(self._refresh_statuses(), exclusive=True)
 
     async def _refresh_statuses(self) -> None:
-        """Re-fetch statuses without reconnecting."""
+        """Re-fetch statuses and retry previously-failed hosts."""
         import asyncio
 
         ssh = self.app.ssh_backend
+
+        # Retry connecting to previously-failed hosts
+        failed_hosts = [h for h in self.hosts if self._connect_errors.get(h.address)]
+        if failed_hosts:
+            retry_results = await ssh.connect(failed_hosts)
+            self._connect_errors.update(retry_results)
+
         connected_hosts = [h for h in self.hosts if not self._connect_errors.get(h.address)]
         tasks = []
         for service in self.services:
@@ -123,9 +130,7 @@ class MainScreen(Screen):
         self._populate_table()
 
     def action_refresh(self) -> None:
-        self.query_one("#loading").display = True
-        self.query_one("#table-container").display = False
-        self.run_worker(self._fetch_statuses(), exclusive=True)
+        self.run_worker(self._refresh_statuses(), exclusive=True)
 
     def action_quit(self) -> None:
         self.app.exit()
