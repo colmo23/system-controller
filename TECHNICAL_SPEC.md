@@ -12,7 +12,7 @@ System Controller is a terminal user interface (TUI) application for monitoring 
 ### 2.1 Functional Requirements
 
 - **FR-1**: Accept an Ansible-style INI inventory file defining target hosts and host groups.
-- **FR-2**: Accept a YAML configuration file defining services to monitor, along with associated files and commands per service.
+- **FR-2**: Accept a YAML configuration file defining services to monitor, along with associated files and commands per service. Service names may use glob patterns (`*`, `?`, `[`) to match multiple systemd units on each host.
 - **FR-3**: Establish SSH connections to all inventory hosts concurrently on startup.
 - **FR-4**: Retrieve `systemctl status` for every configured service on every host.
 - **FR-5**: Display a tabular overview of all service/host pairs with color-coded status indicators (active, inactive, error).
@@ -67,6 +67,7 @@ System Controller is a terminal user interface (TUI) application for monitoring 
 | Application | `app.py` | Textual App lifecycle, owns shared state (SSH backend) |
 | UI | `screens/main.py`, `screens/detail.py` | Compose widgets, handle user input, trigger data fetches |
 | Backend | `ssh.py` | All remote operations via asyncssh |
+| Services | `services.py` | Glob pattern resolution against discovered systemd units |
 | Data | `models.py` | Dataclass definitions for typed data flow |
 | Config | `config.py`, `inventory.py` | Parse YAML and INI input files |
 
@@ -75,7 +76,7 @@ System Controller is a terminal user interface (TUI) application for monitoring 
 ```python
 @dataclass
 class ServiceConfig:
-    name: str                         # systemd unit name (e.g. "nginx")
+    name: str                         # systemd unit name (e.g. "nginx") or glob pattern (e.g. "docker-*")
     files: list[str] = []             # absolute paths on remote host
     commands: list[str] = []          # shell commands to execute on remote host
 
@@ -131,9 +132,12 @@ services:
   redis:
     commands:
       - redis-cli ping
+  docker-*:
+    commands:
+      - docker stats --no-stream
 ```
 
-**Structure:** Top-level `services` key maps service names to objects with optional `files` and `commands` lists.
+**Structure:** Top-level `services` key maps service names to objects with optional `files` and `commands` lists. Service names may contain glob characters (`*`, `?`, `[`) to match multiple systemd units on each host. Matched services inherit the `files` and `commands` from their pattern entry. If a concrete service is matched by multiple patterns, the first match wins.
 
 ## 6. SSH Backend
 
@@ -151,6 +155,7 @@ services:
 | Method | Remote Command | Purpose |
 |--------|---------------|---------|
 | `get_service_status(host, service)` | `systemctl status <service>` | Check if service is active (exit code 0) |
+| `list_services(host)` | `systemctl list-units --type=service --all --no-legend --no-pager` | Discover all service unit names on a host (for glob resolution) |
 | `get_journal(host, service, lines)` | `journalctl -u <service> --no-pager -n <lines>` | Retrieve recent journal entries |
 | `read_file(host, path)` | `cat <path>` | Read a configuration/log file |
 | `run_command(host, command)` | `<command>` | Execute arbitrary command |
@@ -255,7 +260,9 @@ Built on the [Textual](https://textual.textualize.io/) TUI framework.
 5. App: on_mount() → push MainScreen
 6. MainScreen: on_mount() → start _fetch_statuses worker
 7.   SSHBackend.connect() → concurrent SSH to all hosts
-8.   For each (service, host): SSHBackend.get_service_status()
+7a.  For each host: SSHBackend.list_services() → discover available units
+7b.  For each host: resolve_services() → expand glob patterns against available units
+8.   For each (resolved_service, host): SSHBackend.get_service_status()
 9.   Populate DataTable with results
 10.  Start 30s auto-refresh timer
 11. [User selects a row]
@@ -306,6 +313,7 @@ system-controller/
         ├── config.py                 # YAML config loader
         ├── inventory.py              # INI inventory parser
         ├── ssh.py                    # SSHBackend (asyncssh wrapper)
+        ├── services.py              # Glob pattern resolution for service configs
         └── screens/
             ├── __init__.py
             ├── main.py               # MainScreen (status table)

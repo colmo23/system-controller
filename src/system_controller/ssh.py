@@ -11,9 +11,13 @@ from system_controller.models import Host, ServiceStatus
 log = logging.getLogger(__name__)
 
 
+MAX_CONCURRENT_SESSIONS = 8
+
+
 class SSHBackend:
     def __init__(self):
         self._connections: dict[str, asyncssh.SSHClientConnection] = {}
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
 
     async def connect(self, hosts: list[Host]) -> dict[str, str | None]:
         """Connect to all hosts concurrently. Returns {address: error_or_None}."""
@@ -62,6 +66,11 @@ class SSHBackend:
                 results[h.address] = None
         return results
 
+    def _semaphore(self, host: str) -> asyncio.Semaphore:
+        if host not in self._semaphores:
+            self._semaphores[host] = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+        return self._semaphores[host]
+
     async def get_service_status(self, host: str, service: str) -> ServiceStatus:
         conn = self._connections.get(host)
         if conn is None:
@@ -71,7 +80,8 @@ class SSHBackend:
                 status_output="", error="Not connected",
             )
         try:
-            result = await conn.run(f"systemctl status {service}", check=False)
+            async with self._semaphore(host):
+                result = await conn.run(f"systemctl status {service}", check=False)
             output = result.stdout or ""
             # systemctl: 0 = active, 3 = inactive, 4 = not found
             if result.exit_status == 4:
@@ -114,7 +124,8 @@ class SSHBackend:
             return f"[Error: not connected to {host}]"
         log.info("Running command on %s: %s", host, command)
         try:
-            result = await conn.run(command, check=False)
+            async with self._semaphore(host):
+                result = await conn.run(command, check=False)
             output = result.stdout or ""
             stderr = result.stderr or ""
             if stderr:
@@ -125,6 +136,24 @@ class SSHBackend:
         except Exception as exc:
             log.error("Command failed on %s (%s): %s", host, command, exc)
             return f"[Error: {exc}]"
+
+    async def list_services(self, host: str) -> list[str]:
+        """List all systemd service unit names on a host (without .service suffix)."""
+        output = await self.run_command(
+            host,
+            "systemctl list-units --type=service --all --no-legend --no-pager",
+        )
+        services = []
+        for line in output.splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            unit = parts[0]
+            if unit.endswith(".service"):
+                unit = unit[: -len(".service")]
+            services.append(unit)
+        log.info("Discovered %d services on %s", len(services), host)
+        return services
 
     async def close(self):
         log.info("Closing %d SSH connection(s)", len(self._connections))

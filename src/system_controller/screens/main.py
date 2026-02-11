@@ -6,6 +6,7 @@ from textual.widgets import DataTable, Footer, Header, LoadingIndicator
 from textual.containers import Container
 
 from system_controller.models import ServiceConfig, Host, ServiceStatus
+from system_controller.services import resolve_services
 
 AUTO_REFRESH_SECONDS = 30
 
@@ -36,6 +37,7 @@ class MainScreen(Screen):
         self.hosts = hosts
         self._statuses: list[ServiceStatus] = []
         self._connect_errors: dict[str, str | None] = {}
+        self._resolved_services: dict[str, list[ServiceConfig]] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -64,10 +66,16 @@ class MainScreen(Screen):
 
         # Only fetch statuses for connected hosts
         connected_hosts = [h for h in self.hosts if not self._connect_errors.get(h.address)]
+
+        # Resolve glob patterns per host
+        for host in connected_hosts:
+            available = await ssh.list_services(host.address)
+            self._resolved_services[host.address] = resolve_services(self.services, available)
+
         tasks = []
-        for service in self.services:
-            for host in connected_hosts:
-                tasks.append(ssh.get_service_status(host.address, service.name))
+        for host in connected_hosts:
+            for svc in self._resolved_services[host.address]:
+                tasks.append(ssh.get_service_status(host.address, svc.name))
 
         self._statuses = await asyncio.gather(*tasks) if tasks else []
 
@@ -122,10 +130,17 @@ class MainScreen(Screen):
             self._connect_errors.update(retry_results)
 
         connected_hosts = [h for h in self.hosts if not self._connect_errors.get(h.address)]
+
+        # Re-resolve for hosts that were just reconnected
+        for host in failed_hosts:
+            if not self._connect_errors.get(host.address):
+                available = await ssh.list_services(host.address)
+                self._resolved_services[host.address] = resolve_services(self.services, available)
+
         tasks = []
-        for service in self.services:
-            for host in connected_hosts:
-                tasks.append(ssh.get_service_status(host.address, service.name))
+        for host in connected_hosts:
+            for svc in self._resolved_services.get(host.address, []):
+                tasks.append(ssh.get_service_status(host.address, svc.name))
         self._statuses = await asyncio.gather(*tasks) if tasks else []
         self._populate_table()
 
@@ -135,18 +150,20 @@ class MainScreen(Screen):
     def action_quit(self) -> None:
         self.app.exit()
 
+    def _get_service_config(self, service_name: str, host: str) -> ServiceConfig | None:
+        """Look up the resolved ServiceConfig for a concrete service on a host."""
+        for svc in self._resolved_services.get(host, []):
+            if svc.name == service_name:
+                return svc
+        return None
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         key_str = event.row_key.value
         if "@" not in key_str:
             return
         service_name, host = key_str.split("@", 1)
 
-        # Find the service config
-        service_config = None
-        for svc in self.services:
-            if svc.name == service_name:
-                service_config = svc
-                break
+        service_config = self._get_service_config(service_name, host)
         if service_config is None:
             return
 

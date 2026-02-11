@@ -82,7 +82,12 @@ services:
   redis:
     commands:
       - redis-cli ping
+  docker-*:
+    commands:
+      - docker stats --no-stream
 ```
+
+Service names support glob patterns (`*`, `?`, `[`). On each host, patterns are matched against the available systemd units and expanded into individual rows. For example, `docker-*` on a host running `docker-api` and `docker-worker` produces two rows, each inheriting the configured `commands` and `files` from the pattern entry.
 
 ## Unittests
 
