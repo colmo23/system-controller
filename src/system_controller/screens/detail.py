@@ -20,6 +20,7 @@ from system_controller.models import ServiceConfig
 class DetailScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
+        Binding("r", "refresh_tab", "Refresh"),
         Binding("s", "stop_service", "Stop"),
         Binding("t", "restart_service", "Restart"),
     ]
@@ -144,6 +145,29 @@ class DetailScreen(Screen):
 
     def action_restart_service(self) -> None:
         self._do_service_action("restart")
+
+    def action_refresh_tab(self) -> None:
+        self.run_worker(self._refresh_active_tab(), exclusive=True)
+
+    async def _refresh_active_tab(self) -> None:
+        ssh = self.app.ssh_backend
+        tabbed = self.query_one(TabbedContent)
+        active = tabbed.active
+
+        if active == "tab-journal":
+            area = self.query_one("#journal-content", TextArea)
+            journal = await ssh.get_journal(self.host, self.service.name)
+            area.load_text(journal)
+        elif active.startswith("tab-file-"):
+            i = int(active.removeprefix("tab-file-"))
+            area = self.query_one(f"#file-content-{i}", TextArea)
+            content = await ssh.read_file(self.host, self.service.files[i])
+            area.load_text(content)
+        elif active.startswith("tab-cmd-"):
+            i = int(active.removeprefix("tab-cmd-"))
+            area = self.query_one(f"#cmd-content-{i}", TextArea)
+            output = await ssh.run_command(self.host, self.service.commands[i])
+            area.load_text(output)
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

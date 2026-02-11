@@ -16,7 +16,6 @@ class MainScreen(Screen):
         Binding("s", "stop_service", "Stop"),
         Binding("t", "restart_service", "Restart"),
         Binding("q", "quit", "Quit"),
-        Binding("enter", "select_row", "View Details", show=False),
     ]
 
     CSS = """
@@ -131,12 +130,8 @@ class MainScreen(Screen):
     def action_quit(self) -> None:
         self.app.exit()
 
-    def action_select_row(self) -> None:
-        table = self.query_one("#service-table", DataTable)
-        if table.row_count == 0:
-            return
-        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        key_str = str(row_key)
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        key_str = event.row_key.value
         if "@" not in key_str:
             return
         service_name, host = key_str.split("@", 1)

@@ -25,20 +25,31 @@ class SSHBackend:
                 ssh_config = Path.home() / ".ssh" / "config"
                 config_paths = [str(ssh_config)] if ssh_config.exists() else []
                 try:
-                    conn = await asyncssh.connect(
-                        host.address,
-                        known_hosts=None,
-                        config=config_paths,
+                    conn = await asyncio.wait_for(
+                        asyncssh.connect(
+                            host.address,
+                            known_hosts=None,
+                            config=config_paths,
+                        ),
+                        timeout=3,
                     )
+                except asyncio.TimeoutError:
+                    raise
                 except Exception:
                     log.warning("SSH config parse failed for %s, retrying without config", host.address, exc_info=True)
-                    conn = await asyncssh.connect(
-                        host.address,
-                        known_hosts=None,
+                    conn = await asyncio.wait_for(
+                        asyncssh.connect(
+                            host.address,
+                            known_hosts=None,
+                        ),
+                        timeout=3,
                     )
                 self._connections[host.address] = conn
                 results[host.address] = None
                 log.info("Connected to %s", host.address)
+            except asyncio.TimeoutError:
+                log.error("SSH connection timed out for %s", host.address)
+                results[host.address] = "Connection timed out"
             except Exception as exc:
                 log.error("SSH connection failed for %s: %s", host.address, exc, exc_info=True)
                 results[host.address] = str(exc)

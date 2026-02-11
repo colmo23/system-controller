@@ -13,3 +13,12 @@ services:
   redis:
     commands:
       - redis-cli ping
+  ssh:
+    commands:
+      - top -b -n 1
+  cron:
+    commands:
+      - ls
+  containerd:
+    commands:
+      - ls
