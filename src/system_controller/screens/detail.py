@@ -170,4 +170,4 @@ class DetailScreen(Screen):
             area.load_text(output)
 
     def action_go_back(self) -> None:
-        self.app.pop_screen()
+        self.dismiss()

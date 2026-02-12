@@ -167,15 +167,21 @@ class MainScreen(Screen):
         if service_config is None:
             return
 
+        self._auto_refresh_timer.pause()
+
+        def on_detail_return(_=None) -> None:
+            self._auto_refresh_timer.resume()
+            self.run_worker(self._refresh_statuses(), exclusive=True)
+
         from system_controller.screens.detail import DetailScreen
-        self.app.push_screen(DetailScreen(service_config, host))
+        self.app.push_screen(DetailScreen(service_config, host), callback=on_detail_return)
 
     def _get_selected_service_host(self) -> tuple[str, str] | None:
         table = self.query_one("#service-table", DataTable)
         if table.row_count == 0:
             return None
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        key_str = str(row_key)
+        key_str = row_key.value
         if "@" not in key_str:
             return None
         service_name, host = key_str.split("@", 1)
