@@ -1,3 +1,5 @@
+import subprocess
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,6 +16,7 @@ AUTO_REFRESH_SECONDS = 30
 class MainScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("c", "ssh_connect", "SSH"),
         Binding("s", "stop_service", "Stop"),
         Binding("t", "restart_service", "Restart"),
         Binding("q", "quit", "Quit"),
@@ -216,6 +219,28 @@ class MainScreen(Screen):
         else:
             self.notify(f"{action.title()}ped {service} on {host}", timeout=3)
         await self._refresh_statuses()
+
+    def _get_selected_host(self) -> str | None:
+        """Get the host address from the currently selected row."""
+        table = self.query_one("#service-table", DataTable)
+        if table.row_count == 0:
+            return None
+        row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+        key_str = row_key.value
+        if "@" in key_str:
+            return key_str.split("@", 1)[1]
+        if ":" in key_str:
+            return key_str.split(":", 1)[1]
+        return None
+
+    def action_ssh_connect(self) -> None:
+        host = self._get_selected_host()
+        if host is None:
+            return
+        self._auto_refresh_timer.pause()
+        with self.app.suspend():
+            subprocess.run(["ssh", host])
+        self._auto_refresh_timer.resume()
 
     def action_stop_service(self) -> None:
         self._do_service_action("stop")

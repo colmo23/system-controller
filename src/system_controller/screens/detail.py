@@ -13,6 +13,7 @@ from system_controller.models import ServiceConfig
 class DetailScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
+        Binding("c", "ssh_connect", "SSH"),
         Binding("s", "stop_service", "Stop"),
         Binding("t", "restart_service", "Restart"),
     ]
@@ -117,6 +118,10 @@ class DetailScreen(Screen):
 
     def action_restart_service(self) -> None:
         self._do_service_action("restart")
+
+    def action_ssh_connect(self) -> None:
+        with self.app.suspend():
+            subprocess.run(["ssh", self.host])
 
     def action_go_back(self) -> None:
         self.dismiss()
