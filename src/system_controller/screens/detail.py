@@ -1,18 +1,11 @@
-import asyncio
 import os
+import subprocess
+import tempfile
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import (
-    Footer,
-    Header,
-    LoadingIndicator,
-    Static,
-    TabbedContent,
-    TabPane,
-    TextArea,
-)
+from textual.widgets import DataTable, Footer, Header, Static
 
 from system_controller.models import ServiceConfig
 
@@ -20,7 +13,6 @@ from system_controller.models import ServiceConfig
 class DetailScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
-        Binding("r", "refresh_tab", "Refresh"),
         Binding("s", "stop_service", "Stop"),
         Binding("t", "restart_service", "Restart"),
     ]
@@ -33,15 +25,8 @@ class DetailScreen(Screen):
         color: $text;
         padding: 0 1;
     }
-    TextArea {
+    DataTable {
         height: 1fr;
-    }
-    TabPane {
-        height: 1fr;
-        padding: 0;
-    }
-    LoadingIndicator {
-        height: 3;
     }
     """
 
@@ -53,64 +38,51 @@ class DetailScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(f"  {self.service.name} @ {self.host}", id="detail-title")
-        with TabbedContent():
-            with TabPane("Journal", id="tab-journal"):
-                yield LoadingIndicator(id="loading-journal")
-                yield TextArea(id="journal-content", read_only=True)
-            for i, fpath in enumerate(self.service.files):
-                tab_label = os.path.basename(fpath)
-                with TabPane(tab_label, id=f"tab-file-{i}"):
-                    yield LoadingIndicator(id=f"loading-file-{i}")
-                    yield TextArea(id=f"file-content-{i}", read_only=True)
-            for i, cmd in enumerate(self.service.commands):
-                # Use first word of command as tab label
-                tab_label = cmd.split()[0] if cmd else f"cmd-{i}"
-                with TabPane(tab_label, id=f"tab-cmd-{i}"):
-                    yield LoadingIndicator(id=f"loading-cmd-{i}")
-                    yield TextArea(id=f"cmd-content-{i}", read_only=True)
+        yield DataTable(id="detail-table")
         yield Footer()
 
     def on_mount(self) -> None:
-        # Hide all content areas initially
-        self.query_one("#journal-content").display = False
-        for i in range(len(self.service.files)):
-            self.query_one(f"#file-content-{i}").display = False
-        for i in range(len(self.service.commands)):
-            self.query_one(f"#cmd-content-{i}").display = False
+        table = self.query_one("#detail-table", DataTable)
+        table.add_columns("Type", "Name")
+        table.cursor_type = "row"
 
-        self.run_worker(self._fetch_all())
+        table.add_row("Journal", self.service.name, key="journal")
+        for i, fpath in enumerate(self.service.files):
+            table.add_row("File", os.path.basename(fpath), key=f"file:{i}")
+        for i, cmd in enumerate(self.service.commands):
+            table.add_row("Command", cmd, key=f"cmd:{i}")
 
-    async def _fetch_all(self) -> None:
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        key = event.row_key.value
+        self.run_worker(self._fetch_and_view(key), exclusive=True, group="view")
+
+    async def _fetch_and_view(self, key: str) -> None:
         ssh = self.app.ssh_backend
 
-        async def fetch_journal():
-            journal = await ssh.get_journal(self.host, self.service.name)
-            journal_area = self.query_one("#journal-content", TextArea)
-            journal_area.load_text(journal)
-            self.query_one("#loading-journal").display = False
-            journal_area.display = True
-
-        async def fetch_file(i: int, fpath: str):
+        if key == "journal":
+            content = await ssh.get_journal(self.host, self.service.name)
+            suffix = ".log"
+        elif key.startswith("file:"):
+            i = int(key.removeprefix("file:"))
+            fpath = self.service.files[i]
             content = await ssh.read_file(self.host, fpath)
-            area = self.query_one(f"#file-content-{i}", TextArea)
-            area.load_text(content)
-            self.query_one(f"#loading-file-{i}").display = False
-            area.display = True
+            _, ext = os.path.splitext(fpath)
+            suffix = ext or ".txt"
+        elif key.startswith("cmd:"):
+            i = int(key.removeprefix("cmd:"))
+            content = await ssh.run_command(self.host, self.service.commands[i])
+            suffix = ".txt"
+        else:
+            return
 
-        async def fetch_command(i: int, cmd: str):
-            output = await ssh.run_command(self.host, cmd)
-            area = self.query_one(f"#cmd-content-{i}", TextArea)
-            area.load_text(output)
-            self.query_one(f"#loading-cmd-{i}").display = False
-            area.display = True
-
-        tasks = [fetch_journal()]
-        for i, fpath in enumerate(self.service.files):
-            tasks.append(fetch_file(i, fpath))
-        for i, cmd in enumerate(self.service.commands):
-            tasks.append(fetch_command(i, cmd))
-
-        await asyncio.gather(*tasks)
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            with self.app.suspend():
+                subprocess.run(["vim", "-R", tmp_path])
+        finally:
+            os.unlink(tmp_path)
 
     def _do_service_action(self, action: str) -> None:
         from system_controller.screens.confirm import ConfirmScreen
@@ -120,6 +92,7 @@ class DetailScreen(Screen):
                 self.run_worker(
                     self._execute_service_action(action),
                     exclusive=True,
+                    group="action",
                 )
 
         self.app.push_screen(
@@ -138,36 +111,12 @@ class DetailScreen(Screen):
             self.notify(f"{action.title()} {self.service.name}: {error}", severity="error", timeout=5)
         else:
             self.notify(f"{action.title()}ped {self.service.name} on {self.host}", timeout=3)
-        await self._fetch_all()
 
     def action_stop_service(self) -> None:
         self._do_service_action("stop")
 
     def action_restart_service(self) -> None:
         self._do_service_action("restart")
-
-    def action_refresh_tab(self) -> None:
-        self.run_worker(self._refresh_active_tab(), exclusive=True)
-
-    async def _refresh_active_tab(self) -> None:
-        ssh = self.app.ssh_backend
-        tabbed = self.query_one(TabbedContent)
-        active = tabbed.active
-
-        if active == "tab-journal":
-            area = self.query_one("#journal-content", TextArea)
-            journal = await ssh.get_journal(self.host, self.service.name)
-            area.load_text(journal)
-        elif active.startswith("tab-file-"):
-            i = int(active.removeprefix("tab-file-"))
-            area = self.query_one(f"#file-content-{i}", TextArea)
-            content = await ssh.read_file(self.host, self.service.files[i])
-            area.load_text(content)
-        elif active.startswith("tab-cmd-"):
-            i = int(active.removeprefix("tab-cmd-"))
-            area = self.query_one(f"#cmd-content-{i}", TextArea)
-            output = await ssh.run_command(self.host, self.service.commands[i])
-            area.load_text(output)
 
     def action_go_back(self) -> None:
         self.dismiss()
